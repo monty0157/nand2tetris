@@ -40,4 +40,49 @@ CHIP CPU {
 
     PARTS:
     // Put your code here:
+    // The bits for a C-instruction are structured as follows:
+    // i xx a cccccc ddd jjj
+
+    // Instruction decoder. If it's an A instruction (instruction[15] === 0), we load the instruction into the A register. Otherwise, we use the ALU output
+    Mux16(a=instruction, b=aluOut, sel=instruction[15], out=decodedInstruction);
+
+    // Load the register based on the first d-bit or if the instruction is an A-instruction
+    Not(in=instruction[15], out=isAInstruction);
+    Or(a=isAInstruction, b=instruction[5], out=ARegisterLoad);
+    ARegister(in=decodedInstruction, load=ARegisterLoad, out=ARegisterOut, out[0..14]=addressM);
+
+    // Pick A register or M input based on a-bit for C instructions
+    Mux16(a=ARegisterOut, b=inM, sel=instruction[12], out=AorMInput);
+
+    // Calculate jump conditions:
+    // First look at the jump bits to discover the correct jump condition. Assign a 1 to this condition and 0 to the rest
+    DMux8Way(in=true, sel=instruction[0..2], a=noJump, b=JGT, c=JEQ, d=JGE, e=JLT, f=JNE, g=JLE, h=JMP);
+
+    // Next we evaluate the ALU control output bits. If the found jump condition is true, then out will be 1. Otherwise 0
+    // Set d to false because we cannot have zero and negative ALU output at the same time
+    Mux4Way(a=JGT, b=JEQ, c=JLT, d=false, sel[0]=zr, sel[1]=ng, out=jumpEval1);
+    Mux4Way(a=JGE, b=JGE, c=JNE, d=false, sel[0]=zr, sel[1]=ng, out=jumpEval2);
+    Mux4Way(a=JNE, b=JLE, c=JLE, d=false, sel[0]=zr, sel[1]=ng, out=jumpEval3);
+
+    // Check whether the found jump condition (if any!) evaluates to true when compared with the ALU control bits.
+    Or8Way(in[4..7]=false, in[0]=jumpEval1, in[1]=jumpEval2, in[2]=jumpEval3, in[4]=JMP, out=evaluatedJumpCondition);
+
+    // We only do the jump if its a C-instruction
+    And(a=evaluatedJumpCondition, b=instruction[15], out=PCLoad);
+
+    // Program Counter
+    PC(in=ARegisterOut, load=PCLoad, inc=true , reset=reset, out[0..14]=pc);
+
+    // DRegsiter
+    // It only loads when its a C-instruction and when the second d-bit from the instruction is true
+    And(a=instruction[15], b=instruction[4], out=DRegisterLoad);
+    DRegister(in=aluOut, load=DRegisterLoad, out=DRegisterOut);
+
+    // ALU
+    // It takes the DRegister and either the A register or the M input as inputs. The control bits come from the C-instruction.
+    // In case it is an A instruction, the output won't be used for anything.
+    ALU(x=DRegisterOut, y=AorMInput, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=aluOut, out=outM,  zr=zr, ng=ng);
+   
+    // Write to memory based on the third d-bit from the instruction and whether it's a C-instruction
+    And(a=instruction[3], b=instruction[15], out=writeM);
 }
